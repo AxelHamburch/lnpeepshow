@@ -1,0 +1,8 @@
+installer/main_assets
+installer/firmware
+.pio
+.DS_Store
+.vscode
+dist
+build
+firmware.zip
