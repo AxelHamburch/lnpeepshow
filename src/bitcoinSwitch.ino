@@ -152,7 +152,7 @@ void loop()
         Serial.println("Start party");
         // Ambient lighting ON
         digitalWrite(relais17, HIGH);
-        delay(5000);
+        delay(6000);
         // Turn the motor slowly
         motorteller.write(87);
         // Open curtain
@@ -166,7 +166,7 @@ void loop()
           }
           // Spot ON
           digitalWrite(relais18, HIGH);
-          delay(5000);
+          delay(2000);
           // Lighting bright ON
           digitalWrite(relais16, HIGH);
         }
@@ -186,12 +186,12 @@ void loop()
           Serial.println("Curtain is closed");
           // Plate motor OFF
           motorteller.write(90);
-          // Lighting bright OFF
-          digitalWrite(relais16, LOW);
-          delay(5000);
           // Spot OFF
           digitalWrite(relais18, LOW);
-          delay(5000);
+          delay(2000);
+          // Lighting bright OFF
+          digitalWrite(relais16, LOW);
+          delay(6000);
           // Ambient lighting OFF
           digitalWrite(relais17, LOW);
         }
