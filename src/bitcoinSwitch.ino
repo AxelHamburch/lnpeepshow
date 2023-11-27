@@ -49,7 +49,7 @@ void setup()
 {
   Serial.begin(115200);
   int timer = 0;
-  pinMode(2, OUTPUT);
+  pinMode(23, OUTPUT);
 
   // special ->
 
@@ -67,7 +67,7 @@ void setup()
 
   while (timer < 2000)
   {
-    digitalWrite(2, LOW);
+    digitalWrite(23, LOW);
     // special ->
     Serial.println(digitalRead(taster));
     if (digitalRead(taster) == false)
@@ -75,10 +75,10 @@ void setup()
     {
       Serial.println("Launch portal");
       triggerConfig = true;
-      timer = 5000;
+      timer = 2000;
     }
     delay(150);
-    digitalWrite(2, HIGH);
+    digitalWrite(23, HIGH);
     timer = timer + 300;
     delay(150);
   }
@@ -96,7 +96,7 @@ void setup()
     while (WiFi.status() != WL_CONNECTED && timer < 20000)
     {
       delay(500);
-      digitalWrite(2, HIGH);
+      digitalWrite(23, HIGH);
       Serial.print(".");
       timer = timer + 1000;
       if (timer > 19000)
@@ -104,13 +104,13 @@ void setup()
         triggerConfig = true;
       }
       delay(500);
-      digitalWrite(2, LOW);
+      digitalWrite(23, LOW);
     }
   }
 
   if (triggerConfig == true)
   {
-    digitalWrite(2, HIGH);
+    digitalWrite(23, HIGH);
     Serial.println("USB Config triggered");
     configOverSerialPort();
   }
@@ -128,7 +128,7 @@ void loop()
     Serial.println("Failed to connect");
     delay(500);
   }
-  digitalWrite(2, LOW);
+  digitalWrite(23, LOW);
   payloadStr = "";
   delay(2000);
   while ((paid == false) && (digitalRead(taster) == true))
@@ -166,7 +166,7 @@ void loop()
           }
           // Spot ON
           digitalWrite(relais18, HIGH);
-          delay(2000);
+          delay(5000);
           // Lighting bright ON
           digitalWrite(relais16, HIGH);
         }
@@ -188,7 +188,7 @@ void loop()
           motorteller.write(90);
           // Spot OFF
           digitalWrite(relais18, LOW);
-          delay(2000);
+          delay(3000);
           // Lighting bright OFF
           digitalWrite(relais16, LOW);
           delay(6000);
