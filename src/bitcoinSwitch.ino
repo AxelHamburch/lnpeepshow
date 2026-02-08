@@ -92,7 +92,15 @@ void setup()
 
   if (triggerConfig == false)
   {
+    // Configure WiFi for stable connection (based on ZapBox implementation)
+    WiFi.mode(WIFI_STA);                 // Set to Station mode
+    WiFi.setSleep(false);                // Disable WiFi power saving for stable connection
+    WiFi.setAutoReconnect(true);         // Enable auto-reconnect
+    WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN); // Scan all channels for better connection
+    
+    Serial.println("Starting WiFi connection with optimized settings...");
     WiFi.begin(ssid.c_str(), wifiPassword.c_str());
+    
     while (WiFi.status() != WL_CONNECTED && timer < 20000)
     {
       delay(500);
@@ -105,6 +113,12 @@ void setup()
       }
       delay(500);
       digitalWrite(23, LOW);
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi connected successfully!");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
     }
   }
 
@@ -123,10 +137,40 @@ void setup()
 
 void loop()
 {
-  while (WiFi.status() != WL_CONNECTED)
+  // Enhanced WiFi reconnection handling (based on ZapBox implementation)
+  if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("Failed to connect");
-    delay(500);
+    Serial.println("WiFi connection lost - attempting reconnection...");
+    
+    // Re-configure WiFi for stable reconnection
+    WiFi.disconnect();
+    delay(50);
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
+    WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+    WiFi.begin(ssid.c_str(), wifiPassword.c_str());
+    
+    int reconnectTimer = 0;
+    while (WiFi.status() != WL_CONNECTED && reconnectTimer < 15000)
+    {
+      delay(500);
+      digitalWrite(23, HIGH);
+      Serial.print(".");
+      reconnectTimer += 500;
+      delay(500);
+      digitalWrite(23, LOW);
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi reconnected successfully!");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("\nWiFi reconnection failed - will retry in next loop");
+      delay(2000); // Wait before next retry
+      return; // Exit this loop iteration and retry
+    }
   }
   digitalWrite(23, LOW);
   payloadStr = "";
