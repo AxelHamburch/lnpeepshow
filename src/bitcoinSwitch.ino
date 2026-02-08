@@ -132,27 +132,37 @@ void setup()
   Serial.println(lnbitsServer + "/api/v1/ws/" + deviceId);
   webSocket.beginSSL(lnbitsServer, 443, "/api/v1/ws/" + deviceId);
   webSocket.onEvent(webSocketEvent);
-  webSocket.setReconnectInterval(1000);
+  webSocket.setReconnectInterval(5000); // Increased from 1000ms to 5000ms
 }
 
 void loop()
 {
-  // Enhanced WiFi reconnection handling (based on ZapBox implementation)
+  // Enhanced WiFi reconnection handling
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("WiFi connection lost - attempting reconnection...");
+    Serial.println("========================================");
+    Serial.println("LOST WIFI - TRYING TO RECONNECT...");
+    Serial.println("========================================");
+    
+    // Completely stop WebSocket first
+    webSocket.disconnect();
+    Serial.println("WebSocket disconnected");
+    delay(100);
     
     // Re-configure WiFi for stable reconnection
     WiFi.disconnect();
-    delay(50);
+    delay(100);
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
     WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+    
+    Serial.print("Connecting to WiFi SSID: ");
+    Serial.println(ssid);
     WiFi.begin(ssid.c_str(), wifiPassword.c_str());
     
     int reconnectTimer = 0;
-    while (WiFi.status() != WL_CONNECTED && reconnectTimer < 15000)
+    while (WiFi.status() != WL_CONNECTED && reconnectTimer < 20000)
     {
       delay(500);
       digitalWrite(23, HIGH);
@@ -163,25 +173,69 @@ void loop()
     }
     
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nWiFi reconnected successfully!");
+      Serial.println("\n========================================");
+      Serial.println("WIFI RECONNECTED SUCCESSFULLY!");
       Serial.print("IP address: ");
       Serial.println(WiFi.localIP());
+      Serial.println("========================================");
+      
+      // Wait longer for network to stabilize (DNS, Gateway, etc.)
+      Serial.println("Waiting for network to stabilize (3 seconds)...");
+      delay(3000);
+      
+      // Test connectivity before reinitializing WebSocket
+      Serial.print("Testing connection to server: ");
+      Serial.println(lnbitsServer);
+      WiFiClient testClient;
+      if (testClient.connect(lnbitsServer.c_str(), 443)) {
+        Serial.println("Network test successful!");
+        testClient.stop();
+        delay(500);
+        
+        // Now reinitialize WebSocket connection
+        Serial.println("Reinitializing WebSocket connection...");
+        Serial.println("Server: " + lnbitsServer);
+        Serial.println("Path: /api/v1/ws/" + deviceId);
+        webSocket.beginSSL(lnbitsServer, 443, "/api/v1/ws/" + deviceId);
+        webSocket.onEvent(webSocketEvent);
+        webSocket.setReconnectInterval(5000);
+        Serial.println("WebSocket reinitialized - waiting for connection...");
+        delay(2000); // Give WebSocket time to establish connection
+      } else {
+        Serial.println("========================================");
+        Serial.println("NETWORK TEST FAILED!");
+        Serial.println("Server unreachable - will retry in next loop");
+        Serial.println("========================================");
+        delay(5000);
+        return;
+      }
     } else {
-      Serial.println("\nWiFi reconnection failed - will retry in next loop");
-      delay(2000); // Wait before next retry
-      return; // Exit this loop iteration and retry
+      Serial.println("\n========================================");
+      Serial.println("WIFI RECONNECTION FAILED!");
+      Serial.println("Will retry in next loop");
+      Serial.println("========================================");
+      delay(5000);
+      return;
     }
   }
-  digitalWrite(23, LOW);
-  payloadStr = "";
-  delay(2000);
-  while ((paid == false) && (digitalRead(taster) == true))
-  {
-    webSocket.loop();
-    if (paid || (digitalRead(taster) == false))
+  
+  // Only process WebSocket if WiFi is connected
+  if (WiFi.status() == WL_CONNECTED) {
+    digitalWrite(23, LOW);
+    payloadStr = "";
+    delay(2000);
+    while ((paid == false) && (digitalRead(taster) == true))
     {
+      // Check WiFi status before calling webSocket.loop()
+      if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi lost during operation - breaking loop");
+        break;
+      }
+      webSocket.loop();
+      if (paid || (digitalRead(taster) == false))
+      {
 
-      // special ->
+        // special ->
 
       if ((getValue(payloadStr, '-', 0).toInt()) == 12)
       {
@@ -241,10 +295,11 @@ void loop()
         }
       }
       // <- special
+      }
     }
+    Serial.println("Paid");
+    paid = false;
   }
-  Serial.println("Paid");
-  paid = false;
 }
 
 //////////////////HELPERS///////////////////
