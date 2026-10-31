@@ -7,7 +7,8 @@
 
 fs::SPIFFSFS &FlashFS = SPIFFS;
 #define FORMAT_ON_FAIL true
-#define PARAM_FILE "/elements.json"
+#define PARAM_FILE "/config.json"          // written by the ZapBox Web Installer
+#define LEGACY_PARAM_FILE "/elements.json" // old bitcoinSwitch installer format (fallback)
 
 ///////////special////////////////
 
@@ -47,6 +48,7 @@ struct KeyValue
 
 void setup()
 {
+  Serial.setRxBufferSize(2048); // config.json from the installer is ~1.3 KB
   Serial.begin(115200);
   int timer = 0;
   pinMode(23, OUTPUT);
@@ -89,6 +91,12 @@ void setup()
 
   // get the saved details and store in global variables
   readFiles();
+
+  // Nothing configured yet -> go straight to config mode instead of waiting for a WiFi timeout
+  if (ssid.length() == 0)
+  {
+    triggerConfig = true;
+  }
 
   if (triggerConfig == false)
   {
@@ -325,6 +333,51 @@ String getValue(String data, char separator, int index)
 void readFiles()
 {
   File paramFile = FlashFS.open(PARAM_FILE, "r");
+  if (!paramFile)
+  {
+    readLegacyFiles();
+    return;
+  }
+
+  // The ZapBox Web Installer writes a long list of fields; only the first three are used:
+  // [0] ssid, [1] wifipassword, [2] socket (device string)
+  StaticJsonDocument<64> filter;
+  filter[0]["value"] = true;
+  DynamicJsonDocument doc(8192);
+  DeserializationError error = deserializeJson(doc, paramFile, DeserializationOption::Filter(filter));
+  paramFile.close();
+  if (error)
+  {
+    Serial.print("config.json parse error: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  ssid = doc[0]["value"] | "";
+  wifiPassword = doc[1]["value"] | "";
+  serverFull = doc[2]["value"] | "";
+
+  // Device string: wss://<server>/.../<22 character device id>
+  int protocolIndex = serverFull.indexOf("://");
+  int domainIndex = protocolIndex == -1 ? -1 : serverFull.indexOf("/", protocolIndex + 3);
+  if (domainIndex == -1)
+  {
+    Serial.println("Invalid device string: " + serverFull);
+    lnbitsServer = "";
+    deviceId = "";
+    return;
+  }
+  lnbitsServer = serverFull.substring(protocolIndex + 3, domainIndex);
+  deviceId = serverFull.substring(serverFull.length() - 22);
+  Serial.println("SSID: " + ssid);
+  Serial.println("LNbits server: " + lnbitsServer);
+  Serial.println("Device ID: " + deviceId);
+}
+
+// Old bitcoinSwitch installer format (/elements.json), kept so existing devices keep working
+void readLegacyFiles()
+{
+  File paramFile = FlashFS.open(LEGACY_PARAM_FILE, "r");
   if (paramFile)
   {
     StaticJsonDocument<1500> doc;
