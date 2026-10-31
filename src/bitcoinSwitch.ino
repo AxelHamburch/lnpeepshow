@@ -76,7 +76,7 @@ void setup()
     digitalWrite(23, LOW);
     // special ->
     Serial.println(digitalRead(taster));
-    if (digitalRead(taster) == false || digitalRead(bootButton) == LOW)
+    if (digitalRead(taster) == false)
     // <- special
     {
       Serial.println("Launch portal");
