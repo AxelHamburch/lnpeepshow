@@ -471,7 +471,13 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
   break;
   case WStype_TEXT:
     payloadStr = (char *)payload;
+    // zapbox_extension also sends events that are not payments (e.g. NFC card enrolled)
+    if (payloadStr.indexOf("\"nfc_enrolled\"") >= 0)
+    {
+      break;
+    }
     paid = true;
+    break;
   case WStype_ERROR:
   case WStype_FRAGMENT_TEXT_START:
   case WStype_FRAGMENT_BIN_START:
