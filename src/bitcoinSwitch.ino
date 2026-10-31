@@ -58,7 +58,12 @@ void setup()
 
   // special ->
 
-  Serial.println("setup..");
+  Serial.println();
+  Serial.println("==============================================");
+  Serial.println(" lnpeepshow - bitcoinSwitch / zapbox_extension");
+  Serial.println(" Build: " __DATE__ " " __TIME__);
+  Serial.println(" Reset reason: " + resetReasonText());
+  Serial.println("==============================================");
 
   pinMode(taster, INPUT_PULLUP);
   pinMode(bootButton, INPUT_PULLUP);
@@ -71,15 +76,15 @@ void setup()
 
   // <- special
 
+  Serial.println("Hold the GPIO4 button now (2 s) to enter config mode...");
   while (timer < 2000)
   {
     digitalWrite(23, LOW);
     // special ->
-    Serial.println(digitalRead(taster));
     if (digitalRead(taster) == false)
     // <- special
     {
-      Serial.println("Launch portal");
+      Serial.println("GPIO4 button pressed - launch config mode");
       triggerConfig = true;
       timer = 2000;
     }
@@ -99,6 +104,7 @@ void setup()
   // Nothing configured yet -> go straight to config mode instead of waiting for a WiFi timeout
   if (ssid.length() == 0)
   {
+    Serial.println("No WiFi SSID stored - entering config mode");
     triggerConfig = true;
   }
 
@@ -131,6 +137,9 @@ void setup()
       Serial.println("\nWiFi connected successfully!");
       Serial.print("IP address: ");
       Serial.println(WiFi.localIP());
+      Serial.printf("Signal: %d dBm, channel %d\n", WiFi.RSSI(), WiFi.channel());
+    } else {
+      Serial.println("\nWiFi connection failed after 20 s - entering config mode");
     }
   }
 
@@ -141,7 +150,7 @@ void setup()
     configOverSerialPort();
   }
 
-  Serial.println(lnbitsServer + "/api/v1/ws/" + deviceId);
+  Serial.println("Connecting WebSocket: wss://" + lnbitsServer + "/api/v1/ws/" + deviceId);
   webSocket.beginSSL(lnbitsServer, 443, "/api/v1/ws/" + deviceId);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000); // Increased from 1000ms to 5000ms
@@ -245,8 +254,17 @@ void loop()
       }
       webSocket.loop();
       checkBootButtonConfig();
+      logWaitingHeartbeat();
       if (paid || (digitalRead(taster) == false))
       {
+        if (paid)
+        {
+          Serial.println("Payment received: " + payloadStr);
+        }
+        else
+        {
+          Serial.println("Manual trigger via GPIO4 button");
+        }
 
         // special ->
 
@@ -310,7 +328,7 @@ void loop()
       // <- special
       }
     }
-    Serial.println("Paid");
+    Serial.println("Paid - done, waiting for the next payment");
     paid = false;
   }
 }
@@ -320,14 +338,21 @@ void loop()
 // Holding the BOOT button for 5 s while running starts the serial config mode (like on the ZapBox)
 void checkBootButtonConfig()
 {
+  static unsigned long lastCountdownLog = 0;
   if (digitalRead(bootButton) == HIGH)
   {
+    if (bootPressedSince != 0)
+    {
+      Serial.printf("BOOT button released after %lu ms - config mode NOT started\n", millis() - bootPressedSince);
+    }
     bootPressedSince = 0;
     return;
   }
   if (bootPressedSince == 0)
   {
     bootPressedSince = millis();
+    lastCountdownLog = bootPressedSince;
+    Serial.println("BOOT button pressed (GPIO0) - keep holding for 5 s to enter config mode");
   }
   else if (millis() - bootPressedSince >= bootButtonHoldMs)
   {
@@ -335,6 +360,42 @@ void checkBootButtonConfig()
     webSocket.disconnect();
     digitalWrite(23, HIGH);
     configOverSerialPort();
+  }
+  else if (millis() - lastCountdownLog >= 1000)
+  {
+    lastCountdownLog = millis();
+    Serial.printf("  ... BOOT held %lu s\n", (millis() - bootPressedSince) / 1000);
+  }
+}
+
+// Once per second while idle: shows that the device is alive and what state the connections are in
+void logWaitingHeartbeat()
+{
+  static unsigned long lastHeartbeat = 0;
+  if (millis() - lastHeartbeat < 1000)
+  {
+    return;
+  }
+  lastHeartbeat = millis();
+  Serial.printf("[%lus] Waiting for payment | WiFi %d dBm | WebSocket %s | free heap %u\n",
+                millis() / 1000, WiFi.RSSI(),
+                webSocket.isConnected() ? "connected" : "NOT connected", ESP.getFreeHeap());
+}
+
+String resetReasonText()
+{
+  switch (esp_reset_reason())
+  {
+  case ESP_RST_POWERON:   return "power on";
+  case ESP_RST_EXT:       return "external reset";
+  case ESP_RST_SW:        return "software restart";
+  case ESP_RST_PANIC:     return "crash (panic)";
+  case ESP_RST_INT_WDT:   return "interrupt watchdog";
+  case ESP_RST_TASK_WDT:  return "task watchdog";
+  case ESP_RST_WDT:       return "other watchdog";
+  case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+  case ESP_RST_BROWNOUT:  return "brownout (power supply too weak)";
+  default:                return "other (" + String((int)esp_reset_reason()) + ")";
   }
 }
 
@@ -474,11 +535,15 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
     // zapbox_extension also sends events that are not payments (e.g. NFC card enrolled)
     if (payloadStr.indexOf("\"nfc_enrolled\"") >= 0)
     {
+      Serial.println("[WSc] Ignoring non-payment event: " + payloadStr);
       break;
     }
+    Serial.println("[WSc] Message received: " + payloadStr);
     paid = true;
     break;
   case WStype_ERROR:
+    Serial.println("[WSc] Error");
+    break;
   case WStype_FRAGMENT_TEXT_START:
   case WStype_FRAGMENT_BIN_START:
   case WStype_FRAGMENT:
