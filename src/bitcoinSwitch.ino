@@ -368,11 +368,11 @@ void checkBootButtonConfig()
   }
 }
 
-// Once per second while idle: shows that the device is alive and what state the connections are in
+// Every 5 s while idle: shows that the device is alive and what state the connections are in
 void logWaitingHeartbeat()
 {
   static unsigned long lastHeartbeat = 0;
-  if (millis() - lastHeartbeat < 1000)
+  if (millis() - lastHeartbeat < 5000)
   {
     return;
   }
