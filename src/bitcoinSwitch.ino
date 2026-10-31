@@ -17,6 +17,9 @@ int pos = 70; // start position close = 70° - open 180°
 Servo motorteller;
 
 int taster = 4; // ex portalPin / Pull up -> touch to switch
+const int bootButton = 0;                       // onboard BOOT button, hold 5 s -> serial config mode
+const unsigned long bootButtonHoldMs = 5000;
+unsigned long bootPressedSince = 0;
 int relais16 = 16;
 int relais17 = 17;
 int relais18 = 18;
@@ -58,6 +61,7 @@ void setup()
   Serial.println("setup..");
 
   pinMode(taster, INPUT_PULLUP);
+  pinMode(bootButton, INPUT_PULLUP);
   pinMode(relais16, OUTPUT);
   pinMode(relais17, OUTPUT);
   pinMode(relais18, OUTPUT);
@@ -72,7 +76,7 @@ void setup()
     digitalWrite(23, LOW);
     // special ->
     Serial.println(digitalRead(taster));
-    if (digitalRead(taster) == false)
+    if (digitalRead(taster) == false || digitalRead(bootButton) == LOW)
     // <- special
     {
       Serial.println("Launch portal");
@@ -240,6 +244,7 @@ void loop()
         break;
       }
       webSocket.loop();
+      checkBootButtonConfig();
       if (paid || (digitalRead(taster) == false))
       {
 
@@ -311,6 +316,27 @@ void loop()
 }
 
 //////////////////HELPERS///////////////////
+
+// Holding the BOOT button for 5 s while running starts the serial config mode (like on the ZapBox)
+void checkBootButtonConfig()
+{
+  if (digitalRead(bootButton) == HIGH)
+  {
+    bootPressedSince = 0;
+    return;
+  }
+  if (bootPressedSince == 0)
+  {
+    bootPressedSince = millis();
+  }
+  else if (millis() - bootPressedSince >= bootButtonHoldMs)
+  {
+    Serial.println("BOOT button held - USB Config triggered");
+    webSocket.disconnect();
+    digitalWrite(23, HIGH);
+    configOverSerialPort();
+  }
+}
 
 String getValue(String data, char separator, int index)
 {
