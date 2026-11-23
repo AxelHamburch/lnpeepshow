@@ -8,6 +8,15 @@ Als Grundlage dient der fantastische bitcoinSwitch von Ben Arc. Darauf aufgebaut
 
 Die Firmware wird mit diesem Repo über VS Code + PlatformIO auf den ESP32 gespielt (Upload).
 
+Manche ESP32 müssen vor dem Upload erst in den Empfangsmodus (Download-Modus) gebracht werden,
+sonst verweigern sie die Übertragung:
+
+1. **BOOT**-Taste gedrückt halten.
+2. Einmal kurz **Reset** (EN) drücken.
+3. BOOT-Taste loslassen und den Upload starten.
+
+Nach dem Upload einmal Reset drücken, damit die Firmware normal startet.
+
 ## Parametrierung
 
 Die Parametrierung (WLAN und Device-String) erfolgt über den ZapBox Headless Installer:
