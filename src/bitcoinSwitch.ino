@@ -4,6 +4,10 @@
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
 #include <ESP32Servo.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <Preferences.h>
+#include <mbedtls/md.h>
 
 fs::SPIFFSFS &FlashFS = SPIFFS;
 #define FORMAT_ON_FAIL true
@@ -34,6 +38,7 @@ String lnbitsServer;
 String ssid;
 String wifiPassword;
 String deviceId;
+String deviceToken; // zapbox_extension v2.7.0+: "?token=" part of the device string
 String dataId;
 String lnurl;
 
@@ -253,6 +258,7 @@ void loop()
         break;
       }
       webSocket.loop();
+      proveDeviceTokenIfPending();
       checkBootButtonConfig();
       logWaitingHeartbeat();
       if (paid || (digitalRead(taster) == false))
@@ -444,21 +450,50 @@ void readFiles()
   wifiPassword = doc[1]["value"] | "";
   serverFull = doc[2]["value"] | "";
 
-  // Device string: wss://<server>/.../<22 character device id>
-  int protocolIndex = serverFull.indexOf("://");
-  int domainIndex = protocolIndex == -1 ? -1 : serverFull.indexOf("/", protocolIndex + 3);
+  // Device string: wss://<server>/api/v1/ws/<device id>[?token=<device token>]
+  // (the token is part of the string since zapbox_extension v2.7.0)
+  serverFull.trim();
+  String base = serverFull;
+  deviceToken = "";
+  int queryIndex = serverFull.indexOf('?');
+  if (queryIndex != -1)
+  {
+    base = serverFull.substring(0, queryIndex);
+    String query = serverFull.substring(queryIndex + 1);
+    int tokenIndex = query.indexOf("token=");
+    if (tokenIndex != -1)
+    {
+      int tokenEnd = query.indexOf('&', tokenIndex);
+      deviceToken = tokenEnd == -1 ? query.substring(tokenIndex + 6) : query.substring(tokenIndex + 6, tokenEnd);
+      deviceToken.trim();
+    }
+  }
+  while (base.endsWith("/"))
+    base.remove(base.length() - 1);
+
+  int protocolIndex = base.indexOf("://");
+  int domainIndex = protocolIndex == -1 ? -1 : base.indexOf("/", protocolIndex + 3);
   if (domainIndex == -1)
   {
     Serial.println("Invalid device string: " + serverFull);
     lnbitsServer = "";
     deviceId = "";
+    deviceToken = "";
     return;
   }
-  lnbitsServer = serverFull.substring(protocolIndex + 3, domainIndex);
-  deviceId = serverFull.substring(serverFull.length() - 22);
+  lnbitsServer = base.substring(protocolIndex + 3, domainIndex);
+  deviceId = base.substring(base.lastIndexOf('/') + 1);
   Serial.println("SSID: " + ssid);
   Serial.println("LNbits server: " + lnbitsServer);
   Serial.println("Device ID: " + deviceId);
+  if (deviceToken.length() > 0)
+  {
+    Serial.println("Device token: set (" + String(deviceToken.length()) + " chars) - only signed triggers are accepted");
+  }
+  else
+  {
+    Serial.println("Device token: none (old device string) - plain triggers are accepted");
+  }
 }
 
 // Old bitcoinSwitch installer format (/elements.json), kept so existing devices keep working
@@ -513,6 +548,184 @@ void checkConnection()
   }
 }
 
+//////////////////DEVICE TOKEN (zapbox_extension v2.7.0+)///////////////////
+// LNbits core lets anyone push text into /api/v1/ws/<deviceId> and the device
+// ID is public (QR code). With a device token the extension therefore sends
+// relay triggers on the core WebSocket only as a signed envelope:
+//   {"event":"trigger","data":"4-2000","ctr":17,"sig":"<hex>"}
+//   sig = HMAC-SHA256(device token, "<deviceId>|<ctr>|<data>")
+// ctr must be higher than any counter seen before (replay protection); it is
+// kept in NVS per device ID and resynced from the server.
+//
+// The extension only issues invoices once the device proved its token:
+// GET /zapbox/api/v1/public/<id> with header X-Device-Token. That call also
+// returns the current trigger counter.
+
+bool tokenProofPending = true;
+unsigned long lastProofAttempt = 0;
+const unsigned long proofRetryMs = 30000;
+uint32_t lastTriggerCtr = 0;
+bool lastTriggerLoaded = false;
+
+void loadLastTriggerCtr()
+{
+  lastTriggerLoaded = true;
+  Preferences prefs;
+  if (!prefs.begin("lnpeepshow", true))
+    return;
+  // The counter belongs to one device ID; a new device string starts from 0
+  if (prefs.getString("trigId", "") == deviceId)
+    lastTriggerCtr = prefs.getUInt("trigCtr", 0);
+  prefs.end();
+}
+
+void storeLastTriggerCtr(uint32_t ctr)
+{
+  lastTriggerCtr = ctr;
+  Preferences prefs;
+  if (!prefs.begin("lnpeepshow", false))
+    return;
+  prefs.putString("trigId", deviceId);
+  prefs.putUInt("trigCtr", ctr);
+  prefs.end();
+}
+
+String hmacSha256Hex(const String &key, const String &msg)
+{
+  uint8_t out[32];
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (mbedtls_md_hmac(info, (const uint8_t *)key.c_str(), key.length(),
+                      (const uint8_t *)msg.c_str(), msg.length(), out) != 0)
+    return "";
+  static const char hex[] = "0123456789abcdef";
+  String result;
+  result.reserve(64);
+  for (int i = 0; i < 32; i++)
+  {
+    result += hex[out[i] >> 4];
+    result += hex[out[i] & 0x0f];
+  }
+  return result;
+}
+
+bool constantTimeEquals(const String &a, const String &b)
+{
+  if (a.length() != b.length())
+    return false;
+  uint8_t diff = 0;
+  for (size_t i = 0; i < a.length(); i++)
+    diff |= (uint8_t)(a[i] ^ b[i]);
+  return diff == 0;
+}
+
+// Proves the token to the extension and resyncs the trigger counter.
+// Called from the waiting loop after every (re)connect of the WebSocket.
+void proveDeviceTokenIfPending()
+{
+  if (deviceToken.length() == 0 || !tokenProofPending)
+    return;
+  if (lastProofAttempt != 0 && millis() - lastProofAttempt < proofRetryMs)
+    return;
+  lastProofAttempt = millis();
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = "https://" + lnbitsServer + "/zapbox/api/v1/public/" + deviceId;
+  if (!http.begin(client, url))
+  {
+    Serial.println("[Token] Could not start request - retry in 30 s");
+    return;
+  }
+  http.addHeader("X-Device-Token", deviceToken);
+  http.setTimeout(8000);
+  int code = http.GET();
+  if (code != 200)
+  {
+    Serial.printf("[Token] Public config request failed (HTTP %d) - retry in 30 s\n", code);
+    http.end();
+    return;
+  }
+
+  StaticJsonDocument<64> filter;
+  filter["trigger_counter"] = true;
+  DynamicJsonDocument doc(1024);
+  DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  tokenProofPending = false;
+
+  if (!lastTriggerLoaded)
+    loadLastTriggerCtr();
+  if (!error && doc["trigger_counter"].is<uint32_t>())
+  {
+    uint32_t serverCtr = doc["trigger_counter"].as<uint32_t>();
+    if (serverCtr > lastTriggerCtr)
+    {
+      storeLastTriggerCtr(serverCtr);
+    }
+    Serial.printf("[Token] Device token sent to the extension, trigger counter %u\n", lastTriggerCtr);
+  }
+  else
+  {
+    Serial.println("[Token] Device token sent, no trigger counter in the answer");
+  }
+  // Note: a wrong token is not reported here. The extension then simply
+  // issues no invoice ("device token not proven") - update the device string.
+}
+
+// Text from the core WebSocket: accept, verify or drop
+void handleCoreWsText(const String &text)
+{
+  if (deviceToken.length() == 0)
+  {
+    // Old device string without token (bitcoinSwitch / zapbox_extension < 2.7.0)
+    if (text.indexOf("\"nfc_enrolled\"") >= 0)
+    {
+      Serial.println("[WSc] Ignoring non-payment event: " + text);
+      return;
+    }
+    Serial.println("[WSc] Message received: " + text);
+    payloadStr = text;
+    paid = true;
+    return;
+  }
+
+  StaticJsonDocument<512> doc;
+  if (deserializeJson(doc, text))
+  {
+    // Plain "<pin>-<duration>" could have been pushed by anyone
+    Serial.println("[WSc] Unsigned trigger ignored: " + text);
+    return;
+  }
+  const char *event = doc["event"] | "";
+  if (strcmp(event, "trigger") != 0)
+  {
+    Serial.println("[WSc] Ignoring non-payment event: " + text);
+    return;
+  }
+
+  if (!lastTriggerLoaded)
+    loadLastTriggerCtr();
+  String data = doc["data"] | "";
+  uint32_t ctr = doc["ctr"] | 0u;
+  String sig = doc["sig"] | "";
+  String expected = hmacSha256Hex(deviceToken, deviceId + "|" + String(ctr) + "|" + data);
+  if (data.length() == 0 || expected.length() == 0 || !constantTimeEquals(sig, expected))
+  {
+    Serial.println("[WSc] Trigger with invalid signature ignored (wrong token? update the device string)");
+    return;
+  }
+  if (ctr <= lastTriggerCtr)
+  {
+    Serial.printf("[WSc] Replayed trigger ignored (ctr %u <= %u)\n", ctr, lastTriggerCtr);
+    return;
+  }
+  storeLastTriggerCtr(ctr);
+  Serial.printf("[WSc] Signed trigger received: %s (ctr %u)\n", data.c_str(), ctr);
+  payloadStr = data;
+  paid = true;
+}
+
 //////////////////WEBSOCKET///////////////////
 
 void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
@@ -528,18 +741,12 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
 
     // send message to server when Connected
     webSocket.sendTXT("Connected");
+    // (Re)prove the device token, so the extension issues invoices again
+    tokenProofPending = true;
   }
   break;
   case WStype_TEXT:
-    payloadStr = (char *)payload;
-    // zapbox_extension also sends events that are not payments (e.g. NFC card enrolled)
-    if (payloadStr.indexOf("\"nfc_enrolled\"") >= 0)
-    {
-      Serial.println("[WSc] Ignoring non-payment event: " + payloadStr);
-      break;
-    }
-    Serial.println("[WSc] Message received: " + payloadStr);
-    paid = true;
+    handleCoreWsText(String((char *)payload));
     break;
   case WStype_ERROR:
     Serial.println("[WSc] Error");

@@ -17,6 +17,11 @@ https://installer.zapbox.space/headless/
 - **WLAN-Passwort**
 - **Device-String** (socket / WebSocket-URL des Geräts aus der LNbits-Extension)
 
+Ab zapbox_extension v2.7.0 enthält der Device-String einen Token:
+`wss://<host>/api/v1/ws/<id>?token=<token>`. Den kompletten String übernehmen.
+Mit Token nimmt die Firmware nur noch signierte Trigger an. Nach „New token“ im
+Extension-Editor muss der neue Device-String wieder per Headless Installer gesetzt werden.
+
 Die Werte werden per USB-Seriell in `/config.json` auf dem ESP32 gespeichert.
 
 ### Config-Modus starten
