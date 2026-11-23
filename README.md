@@ -19,8 +19,13 @@ https://installer.zapbox.space/headless/
 
 Die Werte werden per USB-Seriell in `/config.json` auf dem ESP32 gespeichert.
 
-In den Config-Modus gelangt der ESP32
-- automatisch, wenn noch keine SSID gespeichert ist,
-- automatisch, wenn die WLAN-Verbindung nach 20 s nicht steht,
-- im laufenden Betrieb durch **5 s Halten der BOOT-Taste** (GPIO0).
-  Die BOOT-Taste nicht beim Einschalten/Reset halten, sonst startet der ESP32 im Download-Modus.
+### Config-Modus starten
+
+1. Den Taster an **GPIO4** gedrückt halten.
+2. Einmal kurz **Reset** (EN) drücken.
+3. Den Taster noch ca. 2 s halten, bis der ESP32 im Config-Modus ist.
+
+Danach mit dem Headless Installer verbinden und die Werte setzen.
+
+Nicht die BOOT-Taste (GPIO0) beim Reset halten, sonst startet der ESP32 im Download-Modus.
+Ist noch keine SSID gespeichert oder steht das WLAN nach 20 s nicht, startet der Config-Modus automatisch.
